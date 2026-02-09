@@ -1,14 +1,47 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<settings>
-	<category label="32003">
-		<setting label="32004" type="bool" id="enable-ssdp" default="true"/>
-		<setting label="32013" type="bool" id="verify-ssl" default="true"/>
-		<setting label="32015" type="text" id="kodi-advertise" default="Kodi-TV"/>
-		<setting label="32016" type="labelenum" id="playback-addon" lvalues="32017|32018"/>
-	</category>
-	<category label="32012">
-		<setting label="32005" type="bool" id="debug-ssdp" default="false"/>
-		<setting label="32011" type="bool" id="debug-cmd" default="false"/>
-		<setting label="32014" type="bool" id="debug-http" default="false"/>
-	</category>
+<settings version="2">
+	<section id="main">
+		<category id="general" label="32003">
+			<group id="general_group">
+				<setting id="enable-ssdp" label="32004" type="boolean">
+					<default>true</default>
+					<control type="toggle"/>
+				</setting>
+				<setting id="verify-ssl" label="32013" type="boolean">
+					<default>true</default>
+					<control type="toggle"/>
+				</setting>
+				<setting id="kodi-advertise" label="32015" type="string">
+					<default>Kodi-TV</default>
+					<control type="edit" format="string"/>
+				</setting>
+				<setting id="playback-addon" label="32016" type="integer">
+					<default>0</default>
+					<constraints>
+						<options>
+							<option label="32017">0</option>
+							<option label="32018">1</option>
+						</options>
+					</constraints>
+					<control type="spinner" format="string"/>
+				</setting>
+			</group>
+		</category>
+		<category id="debug" label="32012">
+			<group id="debug_group">
+				<setting id="debug-ssdp" label="32005" type="boolean">
+					<default>false</default>
+					<control type="toggle"/>
+				</setting>
+				<setting id="debug-cmd" label="32011" type="boolean">
+					<default>false</default>
+					<control type="toggle"/>
+				</setting>
+				<setting id="debug-http" label="32014" type="boolean">
+					<default>false</default>
+					<control type="toggle"/>
+				</setting>
+			</group>
+		</category>
+	</section>
 </settings>

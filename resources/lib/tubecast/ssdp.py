@@ -34,7 +34,7 @@ class ControlMixin(object):
         self._thread = t = threading.Thread(name=type(self).__name__,
                                             target=self.serve_forever,
                                             args=(self.poll_interval,))
-        t.setDaemon(True)
+        t.daemon = True
         t.start()
 
     def stop(self):

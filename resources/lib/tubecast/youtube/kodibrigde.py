@@ -17,7 +17,8 @@ def set_kodi_volume(volume):
 
 
 def get_youtube_plugin_path(videoid, seek=0):  # type: (str, str) -> str
-    if utils.get_setting("playback-addon") == "Tubed":
+    # playback-addon: 0 = YouTube, 1 = Tubed
+    if utils.get_setting_as_int("playback-addon") == 1:
         return "plugin://plugin.video.tubed/?mode=play&video_id={}&start_offset={}".format(
             videoid, float(seek))
     else:

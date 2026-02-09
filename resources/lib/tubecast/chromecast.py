@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 import threading
 
-try:
-    from socketserver import ThreadingMixIn
-except ImportError:
-    from SocketServer import ThreadingMixIn
+from socketserver import ThreadingMixIn
 
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
