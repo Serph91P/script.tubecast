@@ -1,0 +1,69 @@
+name: Make Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '*-dev'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Make Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Release Status
+        id: release
+        run: |
+          version=${GITHUB_REF/refs\/tags\//}
+          if [[ $version == *-dev ]] ; then
+            echo "pre-release=true" >> $GITHUB_OUTPUT
+          else
+            echo "pre-release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout Add-on
+        uses: actions/checkout@v4
+        with:
+          path: ${{ github.event.repository.name }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install libxml2-utils xmlstarlet zip
+
+      - name: Get Changelog
+        id: changelog
+        run: |
+          changes=$(xmlstarlet sel -t -v '//news' -n addon.xml)
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "changes<<$EOF" >> $GITHUB_OUTPUT
+          echo "$changes" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+        working-directory: ${{ github.event.repository.name }}
+
+      - name: Create Zip
+        id: create-zip
+        run: |
+          mv .git ..
+          rm -rf .??*
+          rm *.md 2>/dev/null || true
+          version=$(xmlstarlet sel -t -v 'string(/addon/@version)' addon.xml)
+          filename=${{ github.event.repository.name }}-${version}.zip
+          cd ..
+          zip -r $filename ${{ github.event.repository.name }}
+          mv .git ${{ github.event.repository.name }}
+          echo "filename=$filename" >> $GITHUB_OUTPUT
+        working-directory: ${{ github.event.repository.name }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.create-zip.outputs.filename }}
+          body: ${{ steps.changelog.outputs.changes }}
+          prerelease: ${{ steps.release.outputs.pre-release }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
