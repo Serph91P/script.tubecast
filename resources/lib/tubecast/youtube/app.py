@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import socket
 import threading
+import time
 
 import requests
 from bottle import request, response
@@ -22,6 +23,8 @@ monitor = xbmc.Monitor()
 templates = YoutubeTemplates()
 
 MAX_SEND_RETRIES = 3
+REQUEST_TIMEOUT = 30  # seconds for regular requests
+STREAM_TIMEOUT = (10, None)  # (connect timeout, read timeout - None for streaming)
 
 
 class CastState(object):
@@ -109,7 +112,16 @@ class YoutubeCastV1(object):
         self.default_screen_app = "kodi-tubecast"
         self.screen_uid = "c8277ac4-ke86-4f8b-8fe2-1236bef43397"
 
+        # Configure session with keep-alive and connection pooling
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=5,
+            pool_maxsize=5,
+            max_retries=3
+        )
+        self.session.mount('https://', adapter)
+        self.session.mount('http://', adapter)
+        
         self.player = None  # type: Optional[CastPlayer]
         self.volume_monitor = None  # type: Optional[VolumeMonitor]
         self.listener = None  # type: Optional[YoutubeListener]
@@ -194,7 +206,8 @@ class YoutubeCastV1(object):
     def _generate_screen_id(self):
         screen_id = self.session.get(
             "{}/api/lounge/pairing/generate_screen_id".format(self.base_url),
-            verify=get_setting_as_bool("verify-ssl")
+            verify=get_setting_as_bool("verify-ssl"),
+            timeout=REQUEST_TIMEOUT
         )
         self.screen_id = screen_id.text
         logger.debug("Screen ID is: {}".format(self.screen_id))
@@ -204,7 +217,8 @@ class YoutubeCastV1(object):
         token_info = self.session.post(
             "{}/api/lounge/pairing/get_lounge_token_batch".format(self.base_url),
             data={"screen_ids": self.screen_id},
-            verify=get_setting_as_bool("verify-ssl")
+            verify=get_setting_as_bool("verify-ssl"),
+            timeout=REQUEST_TIMEOUT
         ).json()
         self.lounge_token = token_info["screens"][0]["loungeToken"]
         logger.debug("Lounge Token: {}".format(self.lounge_token))
@@ -218,7 +232,8 @@ class YoutubeCastV1(object):
         bind_info = self.session.post(
             "{}/api/lounge/bc/bind?{}".format(self.base_url, urlencode(bind_vals)),
             data={"count": "0"},
-            verify=get_setting_as_bool("verify-ssl")
+            verify=get_setting_as_bool("verify-ssl"),
+            timeout=REQUEST_TIMEOUT
         ).text
         for cmd in CommandParser(bind_info):
             self.handle_cmd(cmd)
@@ -234,7 +249,8 @@ class YoutubeCastV1(object):
                 "screen_name": self.default_screen_name,
                 "device_id": self.default_screen_name
             },
-            verify=get_setting_as_bool("verify-ssl")
+            verify=get_setting_as_bool("verify-ssl"),
+            timeout=REQUEST_TIMEOUT
         )
         logger.debug("Registered pairing code status code: {}".format(r.status_code))
 
@@ -248,9 +264,22 @@ class YoutubeCastV1(object):
                 "screen_id": self.screen_id,
                 "screen_name": self.default_screen_name
             },
-            verify=get_setting_as_bool("verify-ssl")
+            verify=get_setting_as_bool("verify-ssl"),
+            timeout=REQUEST_TIMEOUT
         )
         return "{}-{}-{}-{}".format(r.text[0:3], r.text[3:6], r.text[6:9], r.text[9:12])
+
+    def refresh_lounge_token(self):
+        """Refresh the lounge token when it expires."""
+        logger.info("Refreshing lounge token...")
+        try:
+            self._get_lounge_token_batch()
+            self._bind()
+            logger.info("Lounge token refreshed successfully")
+            return True
+        except Exception:
+            logger.exception("Failed to refresh lounge token")
+            return False
 
     def handle_cmd(self, cmd):  # type: (Command) -> None
         debug_cmds = get_setting_as_bool('debug-cmd')
@@ -442,9 +471,13 @@ class YoutubeCastV1(object):
         last_exc = None
         for i in range(MAX_SEND_RETRIES):
             try:
-                self.session.post(url, data=post_data, verify=verify_ssl)
+                self.session.post(url, data=post_data, verify=verify_ssl, timeout=REQUEST_TIMEOUT)
             except requests.ConnectionError as e:
                 logger.info("failed to send data on attempt %s/%s", i + 1, MAX_SEND_RETRIES)
+                last_exc = e
+                continue
+            except requests.Timeout as e:
+                logger.info("timeout sending data on attempt %s/%s", i + 1, MAX_SEND_RETRIES)
                 last_exc = e
                 continue
             except Exception:
@@ -470,6 +503,15 @@ class YoutubeCastV1(object):
 
 
 class YoutubeListener(threading.Thread):
+    """Listens to YouTube remote events via long-polling connection.
+    
+    Features automatic reconnection with exponential backoff and token refresh
+    when the connection fails.
+    """
+    
+    MAX_RETRY_DELAY = 60  # Maximum delay between retries in seconds
+    INITIAL_RETRY_DELAY = 2  # Initial delay between retries
+    STREAM_TIMEOUT = (10, 300)  # (connect, read) - read timeout for long-polling
 
     def __init__(self, app, ssdp=True):
         super(YoutubeListener, self).__init__(name="YoutubeListener")
@@ -477,14 +519,20 @@ class YoutubeListener(threading.Thread):
         self.stop = False
         self.ssdp = ssdp
         self.r = None  # type: Optional[requests.Response]
+        self._consecutive_errors = 0
+        self._last_activity = time.time()
 
     def __read_cmd_chunks(self, url):  # type: (str) -> Iterator[str]
-        with self.app.session.get(url, stream=True) as self.r:
+        verify_ssl = get_setting_as_bool("verify-ssl")
+        with self.app.session.get(url, stream=True, timeout=self.STREAM_TIMEOUT,
+                                   verify=verify_ssl) as self.r:
+            # Check for HTTP errors
+            self.r.raise_for_status()
             try:
                 for line in self.r.iter_content(chunk_size=None):
                     if self.stop:
                         break
-
+                    self._last_activity = time.time()
                     yield line
             except requests.exceptions.ChunkedEncodingError:
                 # raised when we forcefully close the socket.
@@ -512,20 +560,54 @@ class YoutubeListener(threading.Thread):
             parser.write(chunk.decode("utf-8"))
             for cmd in parser.get_commands():
                 self.app.handle_cmd(cmd)
+        
+        # Successfully processed - reset error counter
+        self._consecutive_errors = 0
+
+    def _calculate_retry_delay(self):
+        """Calculate delay with exponential backoff."""
+        delay = self.INITIAL_RETRY_DELAY * (2 ** min(self._consecutive_errors, 5))
+        return min(delay, self.MAX_RETRY_DELAY)
 
     def run(self):
         while not self.stop and (not self.ssdp or self.app.has_client):
             try:
                 self._listen()
+            except requests.exceptions.Timeout:
+                logger.warning("Listener timeout, reconnecting...")
+                self._consecutive_errors += 1
+            except requests.exceptions.HTTPError as e:
+                logger.warning("HTTP error %s, attempting token refresh...", e.response.status_code if e.response else "unknown")
+                self._consecutive_errors += 1
+                # Try to refresh token on 4xx errors
+                if e.response and 400 <= e.response.status_code < 500:
+                    try:
+                        self.app.refresh_lounge_token()
+                    except Exception:
+                        logger.exception("Failed to refresh token")
+            except requests.exceptions.ConnectionError:
+                logger.warning("Connection error, will retry...")
+                self._consecutive_errors += 1
             except Exception:
-                logger.exception("error while listening")
+                logger.exception("Error while listening")
+                self._consecutive_errors += 1
+            
+            # Apply backoff delay before retry
+            if not self.stop and self._consecutive_errors > 0:
+                delay = self._calculate_retry_delay()
+                logger.info("Retrying in %d seconds (attempt %d)...", delay, self._consecutive_errors)
+                if monitor.waitForAbort(delay):
+                    break
 
     def force_stop(self):
         self.stop = True
 
         if self.r and not self.r.raw.closed:
-            # Close the underlying socket to kill the ongoing request.
-            sock = socket.fromfd(self.r.raw.fileno(), socket.AF_INET, socket.SOCK_STREAM)
-            sock.shutdown(socket.SHUT_RDWR)
-            sock.close()
-            # request cleanup is handled by __read_cmd_lines
+            try:
+                # Close the underlying socket to kill the ongoing request.
+                sock = socket.fromfd(self.r.raw.fileno(), socket.AF_INET, socket.SOCK_STREAM)
+                sock.shutdown(socket.SHUT_RDWR)
+                sock.close()
+            except Exception:
+                pass  # Socket might already be closed
+            # request cleanup is handled by __read_cmd_chunks

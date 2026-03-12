@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="script.tubecast" name="TubeCast" version="1.6.0+omega.1" provider-name="Seraph91P">
+<addon id="script.tubecast" name="TubeCast" version="1.6.1+omega.1" provider-name="Seraph91P">
     <requires>
         <import addon="xbmc.python" version="3.0.1"/>
         <import addon="script.module.bottle" version="0.12.0"/>
@@ -14,9 +14,9 @@
         <license>MIT</license>
         <source>https://github.com/Serph91P/script.tubecast</source>
         <news>
-            [update] Kodi 21 (Omega) compatibility
-            [update] Updated settings to new XML schema v2
-            [update] Updated dependencies for Kodi 21
+            [fix] Improved connection stability with exponential backoff
+            [fix] Added timeouts to prevent hanging connections
+            [fix] Better error handling and automatic token refresh
         </news>
         <assets>
             <icon>resources/img/icon.png</icon>
