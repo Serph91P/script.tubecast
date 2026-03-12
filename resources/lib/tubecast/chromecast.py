@@ -55,7 +55,7 @@ class Chromecast(object):
                                    handler_class=SilentWSGIRequestHandler)
         self._has_server.set()
         self._server.timeout = 0.1
-        while not self._abort_var or not self._monitor.abortRequested():
+        while not self._abort_var and not self._monitor.abortRequested():
             self._server.handle_request()
 
         self._server.server_close()
