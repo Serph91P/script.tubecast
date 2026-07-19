@@ -20,9 +20,9 @@ jobs:
         run: |
           version=${GITHUB_REF/refs\/tags\//}
           if [[ $version == *-dev ]] ; then
-            echo "pre-release=true" >> $GITHUB_OUTPUT
+            echo "pre-release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "pre-release=false" >> $GITHUB_OUTPUT
+            echo "pre-release=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout Add-on
@@ -40,9 +40,11 @@ jobs:
         run: |
           changes=$(xmlstarlet sel -t -v '//news' -n addon.xml)
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
-          echo "changes<<$EOF" >> $GITHUB_OUTPUT
-          echo "$changes" >> $GITHUB_OUTPUT
-          echo "$EOF" >> $GITHUB_OUTPUT
+          {
+            echo "changes<<$EOF"
+            echo "$changes"
+            echo "$EOF"
+          } >> "$GITHUB_OUTPUT"
         working-directory: ${{ github.event.repository.name }}
 
       - name: Create Zip
@@ -50,13 +52,13 @@ jobs:
         run: |
           mv .git ..
           rm -rf .??*
-          rm *.md 2>/dev/null || true
+          rm -- *.md 2>/dev/null || true
           version=$(xmlstarlet sel -t -v 'string(/addon/@version)' addon.xml)
           filename=${{ github.event.repository.name }}-${version}.zip
           cd ..
-          zip -r $filename ${{ github.event.repository.name }}
+          zip -r "$filename" "${{ github.event.repository.name }}"
           mv .git ${{ github.event.repository.name }}
-          echo "filename=$filename" >> $GITHUB_OUTPUT
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
         working-directory: ${{ github.event.repository.name }}
 
       - name: Create Release
