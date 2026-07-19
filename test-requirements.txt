@@ -2,4 +2,5 @@ bottle
 mock
 pytest
 pytest-mock
+PyYAML
 requests
