@@ -21,7 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 ADDON_ID = "script.tubecast"
 EXPECTED_VERSION = "1.6.1+omega.1"
-TARGET_SHA = "7adff881ab5d0a7fc63f7474a78b2688e2e6eee4"
+NOTIFIER_SHA = "c4c17149a2e8da28b59461b75bd1737bd31eb6e7"
+PACKAGE_BUILDER_SHA = "7adff881ab5d0a7fc63f7474a78b2688e2e6eee4"
 RUNTIME_ENTRIES = ["addon.xml", "main.py", "script.py", "resources/"]
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
@@ -146,7 +147,7 @@ class TestNotifyPin:
         assert "reusable-notify-repository.yml" in self.notify.get("uses", "")
 
     def test_pins_target_sha(self):
-        assert TARGET_SHA in self.notify.get("uses", "")
+        assert NOTIFIER_SHA in self.notify.get("uses", "")
 
     def test_pins_repository_serph91p(self):
         assert "Serph91P/repository.serph91p" in self.notify.get("uses", "")
@@ -180,7 +181,7 @@ class TestValidationsContract:
 
     def test_pins_target_sha(self):
         for job in self.data.get("jobs", {}).values():
-            if TARGET_SHA in job.get("uses", ""):
+            if PACKAGE_BUILDER_SHA in job.get("uses", ""):
                 return
         pytest.fail("Target SHA not pinned")
 
