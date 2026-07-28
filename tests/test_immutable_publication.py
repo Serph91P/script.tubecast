@@ -21,7 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 ADDON_ID = "script.tubecast"
 EXPECTED_VERSION = "1.6.1+omega.1"
-NOTIFIER_SHA = "c4c17149a2e8da28b59461b75bd1737bd31eb6e7"
+NOTIFIER_SHA = "d7434c26c4d49d42496154dd58ae78e1da6f49d6"
+DOWNLOAD_ARTIFACT_SHA = "d3f86a106a0bac45b974a628896c90dbdf5c8093"
 PACKAGE_BUILDER_SHA = "7adff881ab5d0a7fc63f7474a78b2688e2e6eee4"
 RUNTIME_ENTRIES = ["addon.xml", "main.py", "script.py", "resources/"]
 
@@ -126,6 +127,14 @@ class TestNotifyTrigger:
     def test_requires_completed(self):
         assert "completed" in self.triggers["workflow_run"]["types"]
 
+    def test_job_gates_on_exact_successful_events_and_branch(self):
+        job = self.data["jobs"]["validate-evidence"]
+        condition = job["if"]
+        assert "conclusion == 'success'" in condition
+        assert "event == 'push'" in condition
+        assert "event == 'workflow_dispatch'" in condition
+        assert "head_branch == 'develop'" in condition
+
     def test_no_legacy_addon_updated_event(self):
         assert "addon-updated" not in _read_text("notify-repository.yml")
 
@@ -140,8 +149,7 @@ class TestNotifyPin:
     @pytest.fixture(autouse=True)
     def load(self):
         self.data = _load_yaml("notify-repository.yml")
-        jobs = self.data.get("jobs", {})
-        self.notify = jobs.get("notify", jobs.get("notify-repository", {}))
+        self.notify = self.data.get("jobs", {}).get("notify", {})
 
     def test_uses_reusable_notifier(self):
         assert "reusable-notify-repository.yml" in self.notify.get("uses", "")
@@ -382,73 +390,94 @@ class TestUnicodeSanity:
 
 
 # ---------------------------------------------------------------------------
-# 11. Notify resolver security and reliability
+# 11. Notify evidence download and forwarding contract
 # ---------------------------------------------------------------------------
 
-class TestNotifyResolverSecurity:
-    """Regression tests for the four independently verified defects
-    in the embedded resolver of notify-repository.yml."""
+class TestNotifyEvidenceContract:
+    """Evidence is downloaded by the official action and validated locally."""
 
     @pytest.fixture(autouse=True)
     def load(self):
         self.text = _read_text("notify-repository.yml")
         self.data = _load_yaml("notify-repository.yml")
+        self.validate = self.data["jobs"].get("validate-evidence", {})
+        self.notify = self.data["jobs"].get("notify", {})
 
-    def test_api_hostname_has_tld(self):
-        m = re.search(r'GH_API\s*=\s*"([^"]+)"', self.text)
-        assert m, "GH_API assignment not found"
-        assert m.group(1).endswith(".com"), (
-            f"GH_API hostname must end with .com, got {m.group(1)!r}"
+    def test_downloads_exact_evidence_from_triggering_run(self):
+        assert self.validate, "validate-evidence job is required"
+        download = next(
+            step for step in self.validate["steps"]
+            if step.get("name") == "Download validation evidence"
         )
+        assert download["uses"] == f"actions/download-artifact@{DOWNLOAD_ARTIFACT_SHA}"
+        assert download["with"] == {
+            "name": "validation-evidence",
+            "run-id": "${{ github.event.workflow_run.id }}",
+            "github-token": "${{ github.token }}",
+        }
 
-    def test_job_if_gates_on_push_event(self):
-        jobs = self.data.get("jobs", {})
-        runner = jobs.get("validate-and-notify", {})
-        cond = str(runner.get("if", ""))
-        assert "push" in cond, (
-            "Job if must check workflow_run.event == 'push'"
-        )
+    def test_evidence_validation_is_fail_closed(self):
+        for fragment in (
+            "validation-evidence.json",
+            "object_pairs_hook",
+            "fields not in",
+            "required_fields",
+            "validation_run_id",
+            "candidate_sha",
+            "validation_head_sha",
+            "addon_id",
+            "addon_version",
+            "asset_name",
+            "artifact_sha256",
+            "publication_id",
+        ):
+            assert fragment in self.text
 
-    def test_job_if_gates_on_success(self):
-        jobs = self.data.get("jobs", {})
-        runner = jobs.get("validate-and-notify", {})
-        cond = str(runner.get("if", ""))
-        assert "success" in cond, (
-            "Job if must check conclusion == 'success'"
-        )
+    def test_evidence_is_bound_to_trigger_and_tubecast_identity(self):
+        for fragment in (
+            'evidence["validation_run_id"] != run_id',
+            'evidence["candidate_sha"] != head_sha',
+            'evidence["validation_head_sha"] != head_sha',
+            'evidence["addon_id"] != ADDON_ID',
+            'f"{ADDON_ID}-{version}.zip"',
+            'f"{ADDON_ID}@{version}"',
+            'SHA256_RE.fullmatch(evidence["artifact_sha256"])',
+        ):
+            assert fragment in self.text
+        assert 'ADDON_ID = "script.tubecast"' in self.text
 
-    def test_evidence_run_id_bound_to_trigger(self):
-        lines = self.text.splitlines()
-        for line in lines:
-            if ("validation_run_id" in line and "evidence" in line
-                    and ("==" in line or "!=" in line) and "run_id" in line):
-                return
-        pytest.fail(
-            "evidence['validation_run_id'] must be compared to run_id"
-        )
+    def test_jobs_have_only_required_permissions(self):
+        assert "permissions" not in self.data
+        assert self.validate["permissions"] == {"actions": "read"}
+        assert self.notify["permissions"] == {
+            "actions": "read",
+            "contents": "read",
+            "id-token": "write",
+        }
 
-    def test_evidence_head_sha_bound_to_trigger(self):
-        lines = self.text.splitlines()
-        for line in lines:
-            if ("validation_head_sha" in line and "evidence" in line
-                    and ("==" in line or "!=" in line) and "head_sha" in line):
-                return
-        pytest.fail(
-            "evidence['validation_head_sha'] must be compared to head_sha"
-        )
+    def test_notifier_receives_only_exact_validated_values(self):
+        assert self.notify["needs"] == "validate-evidence"
+        assert self.notify["with"] == {
+            "source_repository": "${{ github.repository }}",
+            "candidate_sha": "${{ github.event.workflow_run.head_sha }}",
+            "validation_run_id": "${{ github.event.workflow_run.id }}",
+            "validation_workflow": "Add-on Validations",
+            "validation_workflow_path": ".github/workflows/addon-validations.yml",
+            "validation_event": "${{ github.event.workflow_run.event }}",
+            "expected_branch": "develop",
+            "addon_id": "script.tubecast",
+            "addon_version": "${{ needs.validate-evidence.outputs.addon_version }}",
+            "asset_name": "${{ needs.validate-evidence.outputs.asset_name }}",
+            "artifact_sha256": "${{ needs.validate-evidence.outputs.artifact_sha256 }}",
+            "publication_id": "${{ needs.validate-evidence.outputs.publication_id }}",
+        }
 
-    def test_max_artifact_pages_enforced(self):
-        assert "MAX_ARTIFACT_PAGES" in self.text
-        lines = self.text.splitlines()
-        in_loop = False
-        page_count_used = False
-        for line in lines:
-            stripped = line.strip()
-            if "while url is not None" in stripped:
-                in_loop = True
-            if in_loop and "MAX_ARTIFACT_PAGES" in stripped:
-                page_count_used = True
-                break
-        assert page_count_used, (
-            "MAX_ARTIFACT_PAGES must be checked inside the pagination loop"
-        )
+    @pytest.mark.parametrize("forbidden", [
+        "archive_download_url",
+        "urllib",
+        "repository-dispatch",
+        "client-payload",
+        "secrets: inherit",
+    ])
+    def test_no_legacy_or_direct_dispatch_patterns(self, forbidden):
+        assert forbidden not in self.text
