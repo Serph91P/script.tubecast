@@ -2,247 +2,158 @@ name: Notify Repository
 
 on:
   workflow_run:
-    workflows: ["Add-on Validations"]
+    workflows: [Add-on Validations]
     types: [completed]
     branches: [develop]
 
 jobs:
-  validate-and-notify:
-    name: Validate and Notify
-    runs-on: ubuntu-latest
+  validate-evidence:
+    name: Validate Publication Evidence
     if: >-
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'push' ||
+      github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.head_branch == 'develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
     outputs:
-      source_repository: ${{ steps.validate.outputs.source_repository }}
-      candidate_sha: ${{ steps.validate.outputs.candidate_sha }}
-      validation_run_id: ${{ steps.validate.outputs.validation_run_id }}
-      validation_workflow: ${{ steps.validate.outputs.validation_workflow }}
-      validation_workflow_path: ${{ steps.validate.outputs.validation_workflow_path }}
-      validation_event: ${{ steps.validate.outputs.validation_event }}
-      expected_branch: ${{ steps.validate.outputs.expected_branch }}
-      addon_id: ${{ steps.validate.outputs.addon_id }}
-      addon_version: ${{ steps.validate.outputs.addon_version }}
-      asset_name: ${{ steps.validate.outputs.asset_name }}
-      artifact_sha256: ${{ steps.validate.outputs.artifact_sha256 }}
-      publication_id: ${{ steps.validate.outputs.publication_id }}
+      addon_version: ${{ steps.evidence.outputs.addon_version }}
+      asset_name: ${{ steps.evidence.outputs.asset_name }}
+      artifact_sha256: ${{ steps.evidence.outputs.artifact_sha256 }}
+      publication_id: ${{ steps.evidence.outputs.publication_id }}
     steps:
-      - name: Validate evidence and extract metadata
-        id: validate
+      - name: Download validation evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-evidence
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate and extract evidence
+        id: evidence
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          RUN_NAME: ${{ github.event.workflow_run.name }}
-          RUN_EVENT: ${{ github.event.workflow_run.event }}
-          RUN_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib
-          import io
           import json
           import os
           import re
-          import sys
-          import urllib.error
-          import urllib.parse
-          import urllib.request
-          import zipfile
+          from pathlib import Path
 
-          GH_API = "https://api.github.com"
-          EVIDENCE_ARTIFACT = "validation-evidence"
-          EVIDENCE_FILENAME = "validation-evidence.json"
-          PACKAGE_ARTIFACT = "addon-package"
-          MAX_ARTIFACT_PAGES = 100
-
+          ADDON_ID = "script.tubecast"
+          EVIDENCE_PATH = Path("validation-evidence.json")
+          MAX_EVIDENCE_BYTES = 64 * 1024
           SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.ASCII)
           SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
+          VERSION_RE = re.compile(
+              r"^[0-9]+(?:\.[0-9]+)*(?:\+[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$",
+              re.ASCII,
+          )
 
-          token = os.environ["GITHUB_TOKEN"]
-          run_id = int(os.environ["RUN_ID"])
-          head_sha = os.environ["RUN_HEAD_SHA"]
-          workflow_name = os.environ["RUN_NAME"]
-          trigger_event = os.environ["RUN_EVENT"]
-          source_repo = os.environ["RUN_REPOSITORY"]
+          def reject_duplicate_fields(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError("duplicate evidence field")
+                  value[key] = item
+              return value
 
-          def api_get(url):
-              req = urllib.request.Request(url, headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {token}",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              })
-              with urllib.request.urlopen(req, timeout=30) as resp:
-                  return json.loads(resp.read()), dict(resp.headers.items())
+          if not EVIDENCE_PATH.is_file() or EVIDENCE_PATH.is_symlink():
+              raise SystemExit("Validation evidence file is missing or invalid")
+          raw = EVIDENCE_PATH.read_bytes()
+          if not raw or len(raw) > MAX_EVIDENCE_BYTES:
+              raise SystemExit("Validation evidence size is invalid")
+          try:
+              evidence = json.loads(
+                  raw.decode("utf-8"), object_pairs_hook=reject_duplicate_fields
+              )
+          except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+              raise SystemExit("Validation evidence JSON is malformed") from error
 
-          repo_encoded = urllib.parse.quote(source_repo, safe="/")
-          run_url = f"{GH_API}/repos/{repo_encoded}/actions/runs/{run_id}"
-          run, _ = api_get(run_url)
-
-          checks = [
-              (run.get("id"), run_id, "run ID"),
-              (run.get("head_sha"), head_sha, "head SHA"),
-              (run.get("name"), workflow_name, "workflow name"),
-              (run.get("status"), "completed", "status"),
-              (run.get("conclusion"), "success", "conclusion"),
-          ]
-          for actual, expected, label in checks:
-              if actual != expected:
-                  print(f"::error::{label} mismatch: {actual!r} != {expected!r}")
-                  sys.exit(1)
-
-          artifacts_url = f"{GH_API}/repos/{repo_encoded}/actions/runs/{run_id}/artifacts?per_page=100&page=1"
-          all_artifacts = []
-          visited = set()
-          url = artifacts_url
-          page_count = 0
-          while url is not None:
-              page_count += 1
-              if page_count > MAX_ARTIFACT_PAGES:
-                  print("::error::Artifact pagination exceeded MAX_ARTIFACT_PAGES limit")
-                  sys.exit(1)
-              if url in visited:
-                  print("::error::Artifact pagination cycle detected")
-                  sys.exit(1)
-              visited.add(url)
-              payload, headers = api_get(url)
-              if not isinstance(payload.get("artifacts"), list):
-                  print("::error::Malformed artifact page")
-                  sys.exit(1)
-              all_artifacts.extend(payload["artifacts"])
-              link = headers.get("Link", "")
-              next_url = None
-              for part in link.split(","):
-                  m = re.match(r'\s*<([^<>]+)>\s*;\s*rel="next"\s*', part)
-                  if m:
-                      next_url = m.group(1)
-              url = next_url
-
-          selected = {}
-          for required_name in (PACKAGE_ARTIFACT, EVIDENCE_ARTIFACT):
-              matches = [a for a in all_artifacts if a.get("name") == required_name]
-              if len(matches) != 1:
-                  print(f"::error::Required artifact {required_name!r} must occur exactly once (found {len(matches)})")
-                  sys.exit(1)
-              if matches[0].get("expired"):
-                  print(f"::error::Required artifact {required_name!r} has expired")
-                  sys.exit(1)
-              selected[required_name] = matches[0]
-
-          evidence_url = selected[EVIDENCE_ARTIFACT]["archive_download_url"]
-          req = urllib.request.Request(evidence_url, headers={
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          })
-          with urllib.request.urlopen(req, timeout=30) as resp:
-              evidence_archive = resp.read()
-
-          with zipfile.ZipFile(io.BytesIO(evidence_archive), "r") as zf:
-              infos = zf.infolist()
-              if len(infos) != 1 or infos[0].filename != EVIDENCE_FILENAME:
-                  print("::error::Evidence artifact structure invalid")
-                  sys.exit(1)
-              evidence = json.loads(zf.read(infos[0]))
-
-          evidence_fields = {
-              "validation_run_id", "candidate_sha", "validation_head_sha",
-              "addon_id", "addon_version", "asset_name", "artifact_sha256",
+          required_fields = {
+              "validation_run_id",
+              "candidate_sha",
+              "validation_head_sha",
+              "addon_id",
+              "addon_version",
+              "asset_name",
+              "artifact_sha256",
               "publication_id",
           }
-          if set(evidence.keys()) - {"tag"} != evidence_fields:
-              print("::error::Evidence fields do not match contract")
-              sys.exit(1)
+          if not isinstance(evidence, dict):
+              raise SystemExit("Validation evidence must be an object")
+          fields = set(evidence)
+          if fields not in (required_fields, required_fields | {"tag"}):
+              raise SystemExit("Validation evidence fields do not match contract")
+          if "tag" in evidence and evidence["tag"] != "":
+              raise SystemExit("Optional validation evidence tag must be empty")
+
+          try:
+              run_id = int(os.environ["RUN_ID"])
+          except ValueError as error:
+              raise SystemExit("Triggering validation run ID is invalid") from error
+          head_sha = os.environ["RUN_HEAD_SHA"]
+          if run_id <= 0 or not SHA_RE.fullmatch(head_sha):
+              raise SystemExit("Triggering validation identity is invalid")
+          if type(evidence["validation_run_id"]) is not int:
+              raise SystemExit("Evidence validation run ID must be an integer")
+          string_fields = required_fields - {"validation_run_id"}
+          if any(not isinstance(evidence[field], str) for field in string_fields):
+              raise SystemExit("Evidence identity fields must be strings")
+          if evidence["validation_run_id"] != run_id:
+              raise SystemExit("Evidence validation run ID does not match trigger")
           if evidence["candidate_sha"] != head_sha:
-              print("::error::Evidence candidate SHA does not match run head SHA")
-              sys.exit(1)
-          if int(evidence["validation_run_id"]) != run_id:
-              print("::error::Evidence validation_run_id does not match triggering run")
-              sys.exit(1)
+              raise SystemExit("Evidence candidate SHA does not match trigger")
           if evidence["validation_head_sha"] != head_sha:
-              print("::error::Evidence validation_head_sha does not match triggering head_sha")
-              sys.exit(1)
-          if not SHA_RE.fullmatch(evidence["candidate_sha"]):
-              print("::error::Evidence candidate SHA format invalid")
-              sys.exit(1)
+              raise SystemExit("Evidence validation head SHA does not match trigger")
+          if evidence["addon_id"] != ADDON_ID:
+              raise SystemExit("Evidence add-on ID does not match TubeCast")
+
+          version = evidence["addon_version"]
+          if not VERSION_RE.fullmatch(version):
+              raise SystemExit("Evidence add-on version is invalid")
+          if evidence["asset_name"] != f"{ADDON_ID}-{version}.zip":
+              raise SystemExit("Evidence package filename does not match identity")
           if not SHA256_RE.fullmatch(evidence["artifact_sha256"]):
-              print("::error::Evidence artifact SHA-256 format invalid")
-              sys.exit(1)
-          expected_pub_id = f"{evidence['addon_id']}@{evidence['addon_version']}"
-          if evidence["publication_id"] != expected_pub_id:
-              print("::error::Evidence publication ID does not match")
-              sys.exit(1)
+              raise SystemExit("Evidence package SHA-256 is invalid")
+          if evidence["publication_id"] != f"{ADDON_ID}@{version}":
+              raise SystemExit("Evidence publication ID does not match identity")
 
-          pkg_url = selected[PACKAGE_ARTIFACT]["archive_download_url"]
-          req = urllib.request.Request(pkg_url, headers={
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          })
-          with urllib.request.urlopen(req, timeout=30) as resp:
-              pkg_archive = resp.read()
-
-          with zipfile.ZipFile(io.BytesIO(pkg_archive), "r") as zf:
-              infos = zf.infolist()
-              if len(infos) != 1 or infos[0].filename != evidence["asset_name"]:
-                  print("::error::Package artifact structure invalid")
-                  sys.exit(1)
-              pkg_bytes = zf.read(infos[0])
-
-          actual_sha = hashlib.sha256(pkg_bytes).hexdigest()
-          if actual_sha != evidence["artifact_sha256"]:
-              print("::error::Package SHA-256 does not match evidence")
-              sys.exit(1)
-
-          workflow_path = f".github/workflows/addon-validations.yml"
-          values = {
-              "source_repository": source_repo,
-              "candidate_sha": evidence["candidate_sha"],
-              "validation_run_id": evidence["validation_run_id"],
-              "validation_workflow": workflow_name,
-              "validation_workflow_path": workflow_path,
-              "validation_event": trigger_event,
-              "expected_branch": "develop",
-              "addon_id": evidence["addon_id"],
-              "addon_version": evidence["addon_version"],
-              "asset_name": evidence["asset_name"],
-              "artifact_sha256": evidence["artifact_sha256"],
-              "publication_id": evidence["publication_id"],
-          }
-
-          gh_output = os.environ["GITHUB_OUTPUT"]
-          with open(gh_output, "a", encoding="ascii") as f:
-              for key, val in values.items():
-                  f.write(f"{key}={val}\n")
-          print("Evidence validated successfully")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="ascii") as output:
+              for field in (
+                  "addon_version",
+                  "asset_name",
+                  "artifact_sha256",
+                  "publication_id",
+              ):
+                  output.write(f"{field}={evidence[field]}\n")
           PY
-
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
 
   notify:
     name: Notify Repository
-    needs: validate-and-notify
-    uses: Serph91P/repository.serph91p/.github/workflows/reusable-notify-repository.yml@c4c17149a2e8da28b59461b75bd1737bd31eb6e7
-    with:
-      source_repository: ${{ needs.validate-and-notify.outputs.source_repository }}
-      candidate_sha: ${{ needs.validate-and-notify.outputs.candidate_sha }}
-      validation_run_id: ${{ needs.validate-and-notify.outputs.validation_run_id }}
-      validation_workflow: ${{ needs.validate-and-notify.outputs.validation_workflow }}
-      validation_workflow_path: ${{ needs.validate-and-notify.outputs.validation_workflow_path }}
-      validation_event: ${{ needs.validate-and-notify.outputs.validation_event }}
-      expected_branch: ${{ needs.validate-and-notify.outputs.expected_branch }}
-      addon_id: ${{ needs.validate-and-notify.outputs.addon_id }}
-      addon_version: ${{ needs.validate-and-notify.outputs.addon_version }}
-      asset_name: ${{ needs.validate-and-notify.outputs.asset_name }}
-      artifact_sha256: ${{ needs.validate-and-notify.outputs.artifact_sha256 }}
-      publication_id: ${{ needs.validate-and-notify.outputs.publication_id }}
-    secrets:
-      REPO_DISPATCH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}
+    needs: validate-evidence
     permissions:
       actions: read
       contents: read
       id-token: write
+    uses: Serph91P/repository.serph91p/.github/workflows/reusable-notify-repository.yml@d7434c26c4d49d42496154dd58ae78e1da6f49d6
+    with:
+      source_repository: ${{ github.repository }}
+      candidate_sha: ${{ github.event.workflow_run.head_sha }}
+      validation_run_id: ${{ github.event.workflow_run.id }}
+      validation_workflow: Add-on Validations
+      validation_workflow_path: .github/workflows/addon-validations.yml
+      validation_event: ${{ github.event.workflow_run.event }}
+      expected_branch: develop
+      addon_id: script.tubecast
+      addon_version: ${{ needs.validate-evidence.outputs.addon_version }}
+      asset_name: ${{ needs.validate-evidence.outputs.asset_name }}
+      artifact_sha256: ${{ needs.validate-evidence.outputs.artifact_sha256 }}
+      publication_id: ${{ needs.validate-evidence.outputs.publication_id }}
+    secrets:
+      REPO_DISPATCH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}
