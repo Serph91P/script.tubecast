@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 ADDON_ID = "script.tubecast"
 EXPECTED_VERSION = "1.6.1+omega.1"
-NOTIFIER_SHA = "5afd718564c0d55a914978e43aafd34c92a53029"
+NOTIFIER_SHA = "c4c17149a2e8da28b59461b75bd1737bd31eb6e7"
 PACKAGE_BUILDER_SHA = "7adff881ab5d0a7fc63f7474a78b2688e2e6eee4"
 RUNTIME_ENTRIES = ["addon.xml", "main.py", "script.py", "resources/"]
 
