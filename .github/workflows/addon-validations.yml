@@ -13,7 +13,7 @@ jobs:
     uses: Serph91P/repository.serph91p/.github/workflows/reusable-addon-package.yml@7adff881ab5d0a7fc63f7474a78b2688e2e6eee4
     with:
       addon_id: script.tubecast
-      runtime_entries_json: '["addon.xml", "main.py", "script.py", "resources/"]'
+      runtime_entries_json: '["addon.xml", "LICENSE", "main.py", "script.py", "resources/"]'
     permissions:
       contents: read
       id-token: write

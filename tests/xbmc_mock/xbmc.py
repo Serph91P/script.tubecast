@@ -16,6 +16,11 @@ def log(msg, level=LOGDEBUG):
 
 executeJSONRPC = Mock()
 
+
+class Player(object):
+    """Base class only; playback is mocked explicitly by each test."""
+    pass
+
 getInfoLabel = Mock()
 getCondVisibility = Mock()
 

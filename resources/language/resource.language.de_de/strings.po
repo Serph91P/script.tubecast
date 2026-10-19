@@ -104,3 +104,15 @@ msgstr "Tubed"
 msgctxt "#32018"
 msgid "Youtube"
 msgstr "YouTube"
+
+msgctxt "#32019"
+msgid "Use a separate YouTube profile for each phone"
+msgstr "Für jedes Handy ein eigenes YouTube-Profil verwenden"
+
+msgctxt "#32020"
+msgid "Profile playback blocked. Connect one phone and install the profile-aware YouTube fork."
+msgstr "Profilwiedergabe blockiert. Nur ein Handy verbinden und den YouTube-Fork mit Profilunterstützung installieren."
+
+msgctxt "#32021"
+msgid "Requires the companion YouTube fork. Pair each phone with a signed-in profile on first playback. One account per phone."
+msgstr "Benötigt den passenden YouTube-Fork. Beim ersten Abspielen jedes Handy einem angemeldeten Profil zuordnen. Ein Konto pro Handy."

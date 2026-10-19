@@ -20,11 +20,11 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 ADDON_ID = "script.tubecast"
-EXPECTED_VERSION = "1.6.1+omega.1"
+EXPECTED_VERSION = "1.6.1+omega.2"
 NOTIFIER_SHA = "394c4ffcef574a602a7c640565b5d6f705e9a16d"
 DOWNLOAD_ARTIFACT_SHA = "d3f86a106a0bac45b974a628896c90dbdf5c8093"
 PACKAGE_BUILDER_SHA = "7adff881ab5d0a7fc63f7474a78b2688e2e6eee4"
-RUNTIME_ENTRIES = ["addon.xml", "main.py", "script.py", "resources/"]
+RUNTIME_ENTRIES = ["addon.xml", "LICENSE", "main.py", "script.py", "resources/"]
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 VERSION_RE = re.compile(
@@ -211,7 +211,7 @@ class TestValidationsContract:
     def test_no_legacy_addon_install(self):
         assert "git+https://github.com/xbmc/addon-check.git" not in self.text
 
-    @pytest.mark.parametrize("entry", ["addon.xml", "main.py", "script.py", "resources/"])
+    @pytest.mark.parametrize("entry", ["addon.xml", "LICENSE", "main.py", "script.py", "resources/"])
     def test_runtime_entry_declared(self, entry):
         assert entry in self.text
 
@@ -249,7 +249,7 @@ class TestRuntimeAllowlist:
     """Declared runtime entries must exist on disk."""
 
     @pytest.mark.parametrize("entry", [
-        "addon.xml", "main.py", "script.py",
+        "addon.xml", "LICENSE", "main.py", "script.py",
     ])
     def test_file_exists(self, entry):
         assert (REPO_ROOT / entry).is_file(), f"{entry} missing from source"
@@ -290,6 +290,11 @@ class TestPackageBuild:
         assert root.attrib["id"] == ADDON_ID
         assert root.attrib["version"] == EXPECTED_VERSION
 
+    def test_license_is_included_unchanged(self):
+        raw = _build_deterministic_zip(REPO_ROOT, ADDON_ID, RUNTIME_ENTRIES)
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            assert zf.read(f"{ADDON_ID}/LICENSE") == (REPO_ROOT / "LICENSE").read_bytes()
+
     def test_deterministic_timestamps(self):
         raw = _build_deterministic_zip(REPO_ROOT, ADDON_ID, RUNTIME_ENTRIES)
         with zipfile.ZipFile(io.BytesIO(raw)) as zf:
@@ -314,7 +319,7 @@ class TestPackageBuild:
 
     def test_no_unexpected_top_level(self):
         raw = _build_deterministic_zip(REPO_ROOT, ADDON_ID, RUNTIME_ENTRIES)
-        allowed_top = {"addon.xml", "main.py", "script.py", "resources"}
+        allowed_top = {"addon.xml", "LICENSE", "main.py", "script.py", "resources"}
         with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             for info in zf.infolist():
                 rel = info.filename.split("/", 1)[1]

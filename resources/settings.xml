@@ -15,12 +15,16 @@
 					<default>Kodi-TV</default>
 					<control type="edit" format="string"/>
 				</setting>
+				<setting id="phone-profiles" label="32019" type="boolean" help="32021">
+					<default>false</default>
+					<control type="toggle"/>
+				</setting>
 				<setting id="playback-addon" label="32016" type="integer">
 					<default>0</default>
 					<constraints>
 						<options>
-							<option label="32017">0</option>
-							<option label="32018">1</option>
+							<option label="32018">0</option>
+							<option label="32017">1</option>
 						</options>
 					</constraints>
 					<control type="spinner" format="string"/>

@@ -141,6 +141,7 @@ class YoutubeCastV1(object):
         self.has_client = False
         self.__replace_listener(None)
         self.connected_client = None
+        self._profile_senders = {}
         # Hold references to the index of received codes
         self.code = -1
         # Get service announcement data
@@ -306,6 +307,9 @@ class YoutubeCastV1(object):
 
         elif name == "remoteConnected":
             logger.info("Remote connected: {}".format(data))
+            # A Lounge device ID is a pairing key, not Google account proof.
+            sender_id = data.get('id')
+            self._profile_senders[sender_id or ''] = dict(data)
             if not self.player:
                 # Start "player" thread
                 threading.Thread(name="Player",
@@ -335,8 +339,7 @@ class YoutubeCastV1(object):
         elif name == "setPlaylist":
             logger.debug("setPlaylist: {}".format(data))
             self.state.handle_set_playlist(data)
-            play_url = kodibrigde.get_youtube_plugin_path(self.state.video_id, seek=data.get("currentTime", 0))
-            self.player.play_from_youtube(play_url)
+            self._play_video(seek=data.get("currentTime", 0))
 
         elif name == "updatePlaylist":
             logger.debug("updatePlaylist: {}".format(data))
@@ -384,6 +387,20 @@ class YoutubeCastV1(object):
         elif debug_cmds:
             logger.debug("unhandled command: %r", name)
 
+    def _play_video(self, seek=0):
+        senders = list(self._profile_senders.values())
+        sender = senders[0] if len(senders) == 1 else None
+        if (len(senders) > 1 and get_setting_as_bool('phone-profiles')
+                and kodibrigde.utils.get_setting_as_int('playback-addon') == 0):
+            kodibrigde.utils.notification(message=kodibrigde.utils.get_string(32020))
+            return
+        try:
+            play_url = kodibrigde.get_youtube_plugin_path(self.state.video_id, seek=seek, sender=sender)
+        except kodibrigde.ProfileRoutingError:
+            kodibrigde.utils.notification(message=kodibrigde.utils.get_string(32020))
+            return
+        self.player.play_from_youtube(play_url)
+
     def _resume(self):
         is_playing = self.player.isPlaying()
         if is_playing and not self.player.playing:
@@ -391,7 +408,7 @@ class YoutubeCastV1(object):
             self.player.pause()
         elif not is_playing and self.state.has_playlist:
             # Start playing after player has been stopped
-            self.player.play_from_youtube(kodibrigde.get_youtube_plugin_path(self.state.video_id))
+            self._play_video()
 
     def _seek(self, time_seek):  # type: (int) -> None
         if self.player.isPlaying():
@@ -407,13 +424,13 @@ class YoutubeCastV1(object):
         if not self.state.playlist_prev():
             return
 
-        self.player.play_from_youtube(kodibrigde.get_youtube_plugin_path(self.state.video_id))
+        self._play_video()
 
     def _next(self):
         if not self.state.playlist_next():
             return
 
-        self.player.play_from_youtube(kodibrigde.get_youtube_plugin_path(self.state.video_id))
+        self._play_video()
 
     def _disable_autoplay(self):
         self.__post_bind("onAutoplayModeChanged", {"autoplayMode": "DISABLED"})
@@ -439,7 +456,7 @@ class YoutubeCastV1(object):
         logger.debug("Report playback ended")
         self.report_state_change(STATUS_STOPPED, 0, 0)
         if self.state.playlist_next():
-            self.player.play_from_youtube(kodibrigde.get_youtube_plugin_path(self.state.video_id))
+            self._play_video()
         else:
             self.report_now_playing()
 
