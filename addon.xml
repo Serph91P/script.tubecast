@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="script.tubecast" name="TubeCast" version="1.6.1+omega.1" provider-name="Seraph91P">
+<addon id="script.tubecast" name="TubeCast" version="1.6.1+omega.2" provider-name="Seraph91P">
     <requires>
         <import addon="xbmc.python" version="3.0.1"/>
         <import addon="script.module.bottle" version="0.12.0"/>
@@ -14,6 +14,8 @@
         <license>MIT</license>
         <source>https://github.com/Serph91P/script.tubecast</source>
         <news>
+            [new] Optional phone pairing with existing signed-in YouTube profiles
+            [new] Keep cast playback and history in the paired profile without changing Kodi's global selection
             [fix] Improved connection stability with exponential backoff
             [fix] Added timeouts to prevent hanging connections
             [fix] Better error handling and automatic token refresh
