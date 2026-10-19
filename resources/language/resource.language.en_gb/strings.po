@@ -103,3 +103,15 @@ msgstr ""
 msgctxt "#32018"
 msgid "Youtube"
 msgstr ""
+
+msgctxt "#32019"
+msgid "Use a separate YouTube profile for each phone"
+msgstr ""
+
+msgctxt "#32020"
+msgid "Profile playback blocked. Connect one phone and install the profile-aware YouTube fork."
+msgstr ""
+
+msgctxt "#32021"
+msgid "Requires the companion YouTube fork. Pair each phone with a signed-in profile on first playback. One account per phone."
+msgstr ""
