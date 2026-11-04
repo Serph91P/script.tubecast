@@ -11,31 +11,35 @@ def player(mocker):
     cast = Mock(has_client=True)
     instance = module.CastPlayer(cast)
     instance.play = Mock()
-    instance.play_from_youtube('synthetic-no-playback')
-    instance.isPlaying = Mock(return_value=True)
+    instance.isPlaying = Mock(return_value=False)
     instance.getTime = Mock(return_value=12.5)
     instance.getTotalTime = Mock(return_value=120.0)
     mocker.patch.object(module.xbmc, 'getCondVisibility', return_value=False)
     mocker.patch.object(module.monitor, 'abortRequested', return_value=False)
-    # A callback must return, never wait for playback to finish on Kodi's
-    # interpreter callback thread. Avoid hanging the regression test itself.
+    # Never let an old callback loop hang a regression test.
     mocker.patch.object(module.monitor, 'waitForAbort',
                         side_effect=AssertionError('blocking playback callback'))
+    instance.play_from_youtube('synthetic-no-playback')
+    instance.onPlayBackStarted()
+    instance.isPlaying.return_value = True
     return instance
 
 
-def test_playback_started_callback_does_not_block_kodi_event_delivery(player):
+def test_playback_started_callback_does_not_wait_for_playback_end(player):
+    player.play_from_youtube('synthetic-restart')
     player.onPlayBackStarted()
     module.monitor.waitForAbort.assert_not_called()
 
 
 def test_time_unavailable_at_startup_does_not_raise_from_callback(player):
+    player.play_from_youtube('synthetic-startup-time-race')
     player.getTime.side_effect = RuntimeError('Kodi is not playing any file')
     player.onPlayBackStarted()
 
 
 def test_early_start_defers_time_reads_until_progress_tick(player):
     player.isPlaying.return_value = False
+    player.play_from_youtube('synthetic-early-start')
     player.onPlayBackStarted()
     assert player.report_progress() is False
     player.getTime.assert_not_called()
@@ -49,7 +53,6 @@ def test_early_start_defers_time_reads_until_progress_tick(player):
 @pytest.mark.parametrize('getter', ['getTime', 'getTotalTime'])
 def test_transient_time_race_recovers_on_next_tick(player, getter):
     getattr(player, getter).side_effect = [RuntimeError('not ready'), 20]
-    player.onPlayBackStarted()
     assert player.report_progress() is False
     assert player.report_progress() is True
     player.cast.report_state_change.assert_called_once()
@@ -57,7 +60,6 @@ def test_transient_time_race_recovers_on_next_tick(player, getter):
 
 def test_one_progress_report_per_five_seconds(player, mocker):
     clock = mocker.patch.object(module, 'monotonic', return_value=0)
-    player.onPlayBackStarted()
     assert player.report_progress() is True
     for now in (1, 2, 4.99):
         clock.return_value = now
@@ -106,7 +108,6 @@ def test_non_cast_or_inactive_session_never_reports(player):
 def test_metadata_time_race_is_retried_instead_of_killing_reporter(player, mocker):
     clock = mocker.patch.object(module, 'monotonic', return_value=0)
     player.cast.report_now_playing.side_effect = [RuntimeError('stream changed'), None]
-    player.onPlayBackStarted()
     assert player.report_progress() is True
     clock.return_value = 5
     assert player.report_progress() is True
@@ -127,7 +128,6 @@ def test_receiver_loop_drives_progress_instead_of_a_callback(player, mocker):
 
 
 def test_replacing_cast_video_survives_old_stop_callback(player):
-    player.onPlayBackStarted()
     player.play_from_youtube('synthetic-next-video')
     player.onPlayBackStopped()
     player.onPlayBackStarted()
@@ -135,7 +135,39 @@ def test_replacing_cast_video_survives_old_stop_callback(player):
 
 
 def test_unrelated_playback_start_never_inherits_cast_ownership(player):
-    player.onPlayBackStarted()
     player.onPlayBackStopped()
+    player.onPlayBackStarted()
+    assert player.report_progress() is False
+
+
+def test_cancelled_start_before_callback_never_owns_unrelated_media(player):
+    player.isPlaying.return_value = False
+    player.play_from_youtube('synthetic-cancelled-start')
+    player.onPlayBackStopped()
+    player.isPlaying.return_value = True
+    player.onPlayBackStarted()
+    assert player.report_progress() is False
+    player.onPlayBackEnded()
+    player.cast.report_playback_ended.assert_not_called()
+
+
+def test_cancelled_replacement_clears_request_after_previous_stop(player):
+    player.play_from_youtube('synthetic-cancelled-replacement')
+    player.onPlayBackStopped()  # previous item
+    player.onPlayBackStopped()  # cancel the pending replacement
+    player.onPlayBackStarted()  # unrelated item, not another cast request
+    assert player.report_progress() is False
+
+
+def test_unrelated_previous_item_is_not_reported_while_cast_resolves(player):
+    player.play_from_youtube('synthetic-pending-replacement')
+    assert player.report_progress() is False
+    player.cast.report_state_change.assert_not_called()
+
+
+def test_failed_play_request_does_not_leave_pending_ownership(player):
+    player.play.side_effect = RuntimeError('request rejected')
+    with pytest.raises(RuntimeError):
+        player.play_from_youtube('synthetic-rejected')
     player.onPlayBackStarted()
     assert player.report_progress() is False

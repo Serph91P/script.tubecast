@@ -21,13 +21,22 @@ class CastPlayer(xbmc.Player):
         # auxiliary variable to know if the request came from the youtube background thread
         self.from_yt = False
         self._cast_start_pending = False
+        self._previous_stop_pending = False
         self._next_progress_at = 0
         self._announce_pending = False
 
     def play_from_youtube(self, url):  # type: (str) -> None
+        # One stop can belong to a real item being replaced. With no previous
+        # player, a stop before the start callback cancels this request.
+        self._previous_stop_pending = bool(self.isPlaying())
         self._cast_start_pending = True
-        self.from_yt = True
-        self.play(url)
+        self.from_yt = False
+        try:
+            self.play(url)
+        except Exception:
+            self._cast_start_pending = False
+            self._previous_stop_pending = False
+            raise
 
     @property
     def status_code(self):  # type: () -> int
@@ -90,6 +99,7 @@ class CastPlayer(xbmc.Player):
         # its replacement. Only our pending play request owns the new item.
         self.from_yt = self._cast_start_pending
         self._cast_start_pending = False
+        self._previous_stop_pending = False
         self._announce_pending = True
         self._next_progress_at = 0
 
@@ -106,6 +116,7 @@ class CastPlayer(xbmc.Player):
     def onPlayBackEnded(self):
         should_report = self.__should_report()
         self.from_yt = False
+        self._previous_stop_pending = False
 
         if should_report:
             self.cast.report_playback_ended()
@@ -115,10 +126,14 @@ class CastPlayer(xbmc.Player):
 
     def onPlayBackStopped(self):
         should_report = self.__should_report()
+        if not self._previous_stop_pending:
+            self._cast_start_pending = False
+        self._previous_stop_pending = False
         self.from_yt = False
         if should_report:
             self.cast.report_playback_stopped()
 
     def onPlayBackError(self):
         self._cast_start_pending = False
+        self._previous_stop_pending = False
         self.onPlayBackStopped()
