@@ -20,7 +20,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 ADDON_ID = "script.tubecast"
-EXPECTED_VERSION = "1.6.1+omega.2"
+EXPECTED_VERSION = "1.6.1+omega.3"
 NOTIFIER_SHA = "394c4ffcef574a602a7c640565b5d6f705e9a16d"
 DOWNLOAD_ARTIFACT_SHA = "d3f86a106a0bac45b974a628896c90dbdf5c8093"
 PACKAGE_BUILDER_SHA = "7adff881ab5d0a7fc63f7474a78b2688e2e6eee4"

@@ -510,6 +510,9 @@ class YoutubeCastV1(object):
     def __player_thread(self):
         self.player = CastPlayer(cast=self)
         while not monitor.abortRequested() and self.has_client:
+            # A single periodic reporter survives early Kodi AV callbacks and
+            # leaves their event queue free to process pause/seek/stop events.
+            self.player.report_progress()
             monitor.waitForAbort(1)
 
         self.player = None
