@@ -20,10 +20,12 @@ class CastPlayer(xbmc.Player):
         self.cast = cast
         # auxiliary variable to know if the request came from the youtube background thread
         self.from_yt = False
+        self._cast_start_pending = False
         self._next_progress_at = 0
         self._announce_pending = False
 
     def play_from_youtube(self, url):  # type: (str) -> None
+        self._cast_start_pending = True
         self.from_yt = True
         self.play(url)
 
@@ -84,6 +86,10 @@ class CastPlayer(xbmc.Player):
 
     def onPlayBackStarted(self):
         # Kodi's early callback does not guarantee an available AV stream.
+        # A stop for the previous item may have arrived after play() requested
+        # its replacement. Only our pending play request owns the new item.
+        self.from_yt = self._cast_start_pending
+        self._cast_start_pending = False
         self._announce_pending = True
         self._next_progress_at = 0
 
@@ -114,4 +120,5 @@ class CastPlayer(xbmc.Player):
             self.cast.report_playback_stopped()
 
     def onPlayBackError(self):
+        self._cast_start_pending = False
         self.onPlayBackStopped()

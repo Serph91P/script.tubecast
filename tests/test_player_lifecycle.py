@@ -10,7 +10,8 @@ from resources.lib.tubecast.youtube import player as module
 def player(mocker):
     cast = Mock(has_client=True)
     instance = module.CastPlayer(cast)
-    instance.from_yt = True
+    instance.play = Mock()
+    instance.play_from_youtube('synthetic-no-playback')
     instance.isPlaying = Mock(return_value=True)
     instance.getTime = Mock(return_value=12.5)
     instance.getTotalTime = Mock(return_value=120.0)
@@ -123,3 +124,18 @@ def test_receiver_loop_drives_progress_instead_of_a_callback(player, mocker):
     mocker.patch.object(app_module.monitor, 'waitForAbort', return_value=False)
     getattr(cast, '_YoutubeCastV1__player_thread')()
     assert player.report_progress.call_count == 2
+
+
+def test_replacing_cast_video_survives_old_stop_callback(player):
+    player.onPlayBackStarted()
+    player.play_from_youtube('synthetic-next-video')
+    player.onPlayBackStopped()
+    player.onPlayBackStarted()
+    assert player.report_progress() is True
+
+
+def test_unrelated_playback_start_never_inherits_cast_ownership(player):
+    player.onPlayBackStarted()
+    player.onPlayBackStopped()
+    player.onPlayBackStarted()
+    assert player.report_progress() is False
