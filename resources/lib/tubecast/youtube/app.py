@@ -174,6 +174,7 @@ class YoutubeCastV1(object):
         return templates.not_connected if not self.has_client else templates.connected
 
     def _register_listener(self):
+        logger.info("DIAL receiver start requested")
         self.has_client = True
         pairing_code = request.forms.get("pairingCode")
         self._pair(pairing_code)
@@ -181,6 +182,7 @@ class YoutubeCastV1(object):
         return ""
 
     def _remove_listener(self):
+        logger.info("DIAL receiver stop requested")
         self._initial_app_state()
         response.status = 200
         return ""
@@ -488,7 +490,9 @@ class YoutubeCastV1(object):
         last_exc = None
         for i in range(MAX_SEND_RETRIES):
             try:
-                self.session.post(url, data=post_data, verify=verify_ssl, timeout=REQUEST_TIMEOUT)
+                reply = self.session.post(url, data=post_data, verify=verify_ssl, timeout=REQUEST_TIMEOUT)
+                # Status only: never log session URLs, request bodies or tokens.
+                logger.info("Lounge send %s: HTTP %s", sc, reply.status_code)
             except requests.ConnectionError as e:
                 logger.info("failed to send data on attempt %s/%s", i + 1, MAX_SEND_RETRIES)
                 last_exc = e
@@ -543,6 +547,7 @@ class YoutubeListener(threading.Thread):
         verify_ssl = get_setting_as_bool("verify-ssl")
         with self.app.session.get(url, stream=True, timeout=self.STREAM_TIMEOUT,
                                    verify=verify_ssl) as self.r:
+            logger.info("Lounge receive channel: HTTP %s", self.r.status_code)
             # Check for HTTP errors
             self.r.raise_for_status()
             try:
@@ -556,6 +561,8 @@ class YoutubeListener(threading.Thread):
                 # If we don't want to stop though, this should raise.
                 if not self.stop:
                     raise
+            finally:
+                logger.info("Lounge receive stream ended (stop=%s)", self.stop)
 
     def _listen(self):
         logger.debug("Listening to youtube remote events...")
